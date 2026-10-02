@@ -1,0 +1,89 @@
+[project]
+name = "grounding-dino"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # --- 上游 GroundingDINO 仓库(editable 安装,见下方 [tool.uv.sources])---
+    "groundingdino",
+    # --- torch 系(走下面的 pytorch-cu128 索引)---
+    "torch>=2.7",
+    "torchvision",
+    # --- GroundingDINO requirements.txt 的内容 ---
+    # ⚠️ 必须锁 v4:<5。上游 bertwarper.py:27,29 抓的是 BertModel 上的
+    # `get_extended_attention_mask` / `get_head_mask`,这两个方法在 transformers v5
+    # 里被删掉了(v5 重构了整个 attention mask 接口),跑起来直接
+    # AttributeError: 'BertModel' object has no attribute 'get_extended_attention_mask'。
+    "transformers>=4.36,<5",
+    "addict",
+    "yapf",
+    "timm",
+    "numpy",
+    "opencv-python",
+    "supervision>=0.22.0",
+    "pycocotools",
+    # --- 编译上游 GroundingDINO 需要(setup.py 是 setuptools 后端,
+    #     且 --no-build-isolation 下 setuptools 必须已在 venv 中)---
+    "setuptools",
+]
+
+[project.scripts]
+grounding-dino = "grounding_dino:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# 上游 GroundingDINO 没有 pyproject.toml(纯 setup.py),而它的 setup.py
+# 顶层会 `import torch`。默认的隔离构建环境里没有 torch,setup.py 就会自己去
+# `pip install torch` 然后失败(实测:uv lock --refresh 直接炸在这一步)。
+# 声明成不隔离后,uv 用项目环境构建,能拿到已装好的 torch。
+# 写在这里,是为了不用每次都在命令行手敲 --no-build-isolation-package groundingdino。
+no-build-isolation-package = ["groundingdino"]
+
+[tool.uv.workspace]
+members = [
+    "my_project",
+]
+
+# ============================================================
+#  索引源(国内镜像)
+#  2026-09-30 实测:两个镜像都是官方的逐字节镜像
+#    tuna:/packages/ 与 files.pythonhosted.org 路径同构,同一文件
+#          content-length 与 uv.lock 记录一致
+#    nju: torch-2.10.0+cu128 的 sha256 与 uv.lock 记录完全一致
+# ============================================================
+
+# PyPI 主力源:清华 TUNA。default = true 表示取代 PyPI 成为默认索引。
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+# PyTorch 独立索引。
+# sm_120(Blackwell / RTX 50 系)必须用 cu128 及以上的轮子,
+# 否则运行时会报 "no kernel image is available for execution"。
+# torch/torchvision 的 +cu128 wheel 不在 PyPI 上,清华源管不到,只能走这里。
+# 用南大 NJU(PEP503 形态);aliyun 的 pytorch-wheels 是扁平目录列表,
+# 不是简单索引,uv 当不了 index 用。
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://mirrors.nju.edu.cn/pytorch/whl/cu128"
+explicit = true
+
+# explicit = true 表示这个索引只服务下面 sources 里点名的包,
+# 其余包(transformers、numpy 等)照常走上面的 tuna。
+[tool.uv.sources]
+# 上游仓库以 editable 方式接入,改源码立即生效。
+# 注意:它没有 pyproject.toml(纯 setup.py),而且 setup.py 顶层会
+# `import torch`,所以必须用 --no-build-isolation-package groundingdino 安装,
+# 否则构建环境里没有 torch,setup.py 会去 pip install torch 然后失败。
+groundingdino = { path = "GroundingDINO", editable = true }
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
