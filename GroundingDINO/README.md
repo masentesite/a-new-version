@@ -334,6 +334,30 @@ See our example <a href="https://github.com/IDEA-Research/GroundingDINO/blob/mai
 Marrying Grounding DINO with <a href="https://github.com/gligen/GLIGEN">GLIGEN</a> for more Detailed Image Editing.
 </font></summary>
 See our example <a href="https://github.com/IDEA-Research/GroundingDINO/blob/main/demo/image_editing_with_groundingdino_gligen.ipynb">notebook</a> for more details.
+
+## Local v2 training
+
+The local v2 model can be trained on the multimodal `TrainSet.` data. The
+training entry points resolve paths relative to this `GroundingDINO` folder:
+
+```bash
+./run_train.sh
+```
+
+This uses the visible, infrared, and depth images in
+`../../data/TrainSet./Images`, reads queries and boxes from
+`../../data/TrainSet./queries/queries.json`, and saves checkpoints under
+`runs/v2/`. The best checkpoint is `runs/v2/best.pth`.
+
+To evaluate the held-out image split:
+
+```bash
+./run_test.sh
+```
+
+Useful overrides can be passed to either script, for example
+`./run_train.sh --epochs 30 --batch-size 2` or
+`./run_test.sh --checkpoint runs/v2/best.pth --all-data`.
 <img src=".asset/GD_GLIGEN.png" alt="GD_GLIGEN" width="100%">
 </details>
 
@@ -365,7 +389,6 @@ If you find our work helpful for your research, please consider citing the follo
   year={2023}
 }
 ```
-
 
 
 

@@ -50,6 +50,44 @@ def load_image(image_path: str) -> Tuple[np.array, torch.Tensor]:
     return image, image_transformed
 
 
+def load_multimodal_image(
+        rgb_path: str,
+        infrared_path: str = None,
+        depth_path: str = None
+) -> Tuple[np.array, dict]:
+    transform = T.Compose(
+        [
+            T.RandomResize([800], max_size=1333),
+            T.ToTensor(),
+            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ]
+    )
+
+    rgb_source = Image.open(rgb_path).convert("RGB")
+    image_source = np.asarray(rgb_source)
+    rgb, _ = transform(rgb_source, None)
+    target_size = rgb.shape[-2:]
+    images = {"rgb": rgb}
+
+    if infrared_path is not None:
+        infrared_source = Image.open(infrared_path).convert("RGB")
+        infrared, _ = transform(infrared_source, None)
+        infrared = torch.nn.functional.interpolate(
+            infrared[None], size=target_size, mode="bilinear", align_corners=False
+        )[0]
+        images["infrared"] = infrared
+
+    if depth_path is not None:
+        depth_source = Image.open(depth_path).convert("RGB")
+        depth, _ = transform(depth_source, None)
+        depth = torch.nn.functional.interpolate(
+            depth[None], size=target_size, mode="bilinear", align_corners=False
+        )[0]
+        images["depth"] = depth
+
+    return image_source, images
+
+
 def predict(
         model,
         image: torch.Tensor,
@@ -67,29 +105,81 @@ def predict(
     with torch.no_grad():
         outputs = model(image[None], captions=[caption])
 
-    prediction_logits = outputs["pred_logits"].cpu().sigmoid()[0]  # prediction_logits.shape = (nq, 256)
-    prediction_boxes = outputs["pred_boxes"].cpu()[0]  # prediction_boxes.shape = (nq, 4)
+    return _predict_from_model_outputs(
+        model=model,
+        outputs=outputs,
+        caption=caption,
+        box_threshold=box_threshold,
+        text_threshold=text_threshold,
+        remove_combined=remove_combined,
+    )
+
+
+def predict_multimodal(
+        model,
+        images: dict,
+        caption: str,
+        box_threshold: float,
+        text_threshold: float,
+        device: str = "cuda",
+        remove_combined: bool = False
+) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
+    caption = preprocess_caption(caption=caption)
+    model = model.to(device)
+    images = {key: image.to(device) for key, image in images.items()}
+    batched_images = {key: image[None] for key, image in images.items()}
+    with torch.no_grad():
+        outputs = model(batched_images, captions=[caption])
+
+    return _predict_from_model_outputs(
+        model=model,
+        outputs=outputs,
+        caption=caption,
+        box_threshold=box_threshold,
+        text_threshold=text_threshold,
+        remove_combined=remove_combined,
+    )
+
+
+def _predict_from_model_outputs(
+        model,
+        outputs,
+        caption: str,
+        box_threshold: float,
+        text_threshold: float,
+        remove_combined: bool = False
+) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
+    prediction_logits = outputs["pred_logits"].cpu().sigmoid()[0]
+    prediction_boxes = outputs["pred_boxes"].cpu()[0]
 
     mask = prediction_logits.max(dim=1)[0] > box_threshold
-    logits = prediction_logits[mask]  # logits.shape = (n, 256)
-    boxes = prediction_boxes[mask]  # boxes.shape = (n, 4)
+    logits = prediction_logits[mask]
+    boxes = prediction_boxes[mask]
 
     tokenizer = model.tokenizer
     tokenized = tokenizer(caption)
-    
+
     if remove_combined:
-        sep_idx = [i for i in range(len(tokenized['input_ids'])) if tokenized['input_ids'][i] in [101, 102, 1012]]
-        
+        sep_idx = [
+            i
+            for i in range(len(tokenized["input_ids"]))
+            if tokenized["input_ids"][i] in [101, 102, 1012]
+        ]
+
         phrases = []
         for logit in logits:
             max_idx = logit.argmax()
             insert_idx = bisect.bisect_left(sep_idx, max_idx)
             right_idx = sep_idx[insert_idx]
             left_idx = sep_idx[insert_idx - 1]
-            phrases.append(get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer, left_idx, right_idx).replace('.', ''))
+            phrases.append(
+                get_phrases_from_posmap(
+                    logit > text_threshold, tokenized, tokenizer, left_idx, right_idx
+                ).replace(".", "")
+            )
     else:
         phrases = [
-            get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer).replace('.', '')
+            get_phrases_from_posmap(logit > text_threshold, tokenized, tokenizer).replace(".", "")
             for logit
             in logits
         ]
